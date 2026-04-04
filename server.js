@@ -1,23 +1,7 @@
 /**
  * ============================================================
- * ASK JL — Backend Proxy Server
- * ============================================================
- * This server sits between your website and the Anthropic API.
- * Your API key lives ONLY here — never in the browser.
- *
- * STACK: Node.js + Express
- * REQUIREMENTS: Node.js 18+
- *
- * SETUP:
- *   1. npm install
- *   2. Copy .env.example to .env and add your API key
- *   3. node server.js   (or: npm start)
- *
- * DEPLOY OPTIONS:
- *   - Railway.app     (free tier available, easiest)
- *   - Render.com      (free tier available)
- *   - Heroku
- *   - VPS / cPanel Node app
+ * ASK JL — Backend Proxy Server v2
+ * Email notifications via Microsoft 365 / Outlook
  * ============================================================
  */
 
@@ -26,31 +10,20 @@ const express    = require('express');
 const cors       = require('cors');
 const rateLimit  = require('express-rate-limit');
 const fetch      = require('node-fetch');
+const nodemailer = require('nodemailer');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-/* ──────────────────────────────────────────
-   MIDDLEWARE
-────────────────────────────────────────── */
-
-// Parse JSON bodies
 app.use(express.json({ limit: '16kb' }));
 
-// CORS — only allow your website domain
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
-  .split(',')
-  .map(o => o.trim())
-  .filter(Boolean);
+  .split(',').map(o => o.trim()).filter(Boolean);
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (server-to-server, Postman, etc.)
     if (!origin) return callback(null, true);
-
-    // In development, allow everything
     if (process.env.NODE_ENV === 'development') return callback(null, true);
-
     if (ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin)) {
       callback(null, true);
     } else {
@@ -61,81 +34,154 @@ app.use(cors({
   allowedHeaders: ['Content-Type']
 }));
 
-// Rate limiting — prevents abuse / runaway API costs
+app.set('trust proxy', 1);
+
 const limiter = rateLimit({
-  windowMs: 60 * 1000,       // 1 minute window
-  max:      30,               // max 30 requests per IP per minute
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 60 * 1000, max: 30,
+  standardHeaders: true, legacyHeaders: false,
   message: { error: 'Too many requests. Please slow down.' }
 });
 app.use('/api/', limiter);
 
-/* ──────────────────────────────────────────
-   HEALTH CHECK
-────────────────────────────────────────── */
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ASK JL Proxy', version: '1.0.0' });
+/* ── Microsoft 365 Email Setup ──
+   Railway environment variables needed:
+     EMAIL_USER   = info@jlsolutionsgroupe.com
+     EMAIL_PASS   = your Microsoft 365 password
+     NOTIFY_EMAIL = info@jlsolutionsgroupe.com
+*/
+const transporter = nodemailer.createTransport({
+  host:   'smtp.office365.com',
+  port:   587,
+  secure: false,
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  },
+  tls: { rejectUnauthorized: false }
 });
 
-/* ──────────────────────────────────────────
-   MAIN PROXY ENDPOINT
-   POST /api/chat
-────────────────────────────────────────── */
+async function sendContactNotification(clientName, clientMessage, contactType) {
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    console.log('Email not configured — skipping notification'); return;
+  }
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+      <div style="background:#0B2545;padding:24px 28px;border-radius:10px 10px 0 0;">
+        <h2 style="color:#C9A84C;margin:0;">ASK JL — New Contact Request</h2>
+        <p style="color:rgba(255,255,255,0.6);margin:4px 0 0;font-size:13px;">JL Solutions Groupe LLC</p>
+      </div>
+      <div style="background:#f5f8ff;padding:28px;border-radius:0 0 10px 10px;border:1px solid #dce9f7;">
+        <h3 style="color:#0B2545;margin:0 0 20px;">A client wants to reach you!</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;">
+          <tr style="border-bottom:1px solid #e3f0ff;">
+            <td style="padding:10px 0;color:#5478A0;width:150px;font-weight:bold;">Client Name</td>
+            <td style="padding:10px 0;color:#0B2545;">${clientName || 'Not provided yet'}</td>
+          </tr>
+          <tr style="border-bottom:1px solid #e3f0ff;">
+            <td style="padding:10px 0;color:#5478A0;font-weight:bold;">Request Type</td>
+            <td style="padding:10px 0;color:#0B2545;">${contactType}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 0;color:#5478A0;font-weight:bold;vertical-align:top;">Message</td>
+            <td style="padding:10px 0;color:#0B2545;">${clientMessage}</td>
+          </tr>
+        </table>
+        <div style="background:#fff;padding:18px;border-radius:8px;border:1px solid #dce9f7;margin-top:24px;">
+          <p style="margin:0 0 10px;color:#0B2545;font-weight:bold;">Follow up with this client:</p>
+          <p style="margin:4px 0;">📞 <a href="tel:8039047260" style="color:#1565C0;">803-904-7260</a></p>
+          <p style="margin:4px 0;">📧 <a href="mailto:info@jlsolutionsgroupe.com" style="color:#1565C0;">info@jlsolutionsgroupe.com</a></p>
+          <p style="margin:4px 0;">🌐 <a href="https://www.jlsolutionsgroupe.com" style="color:#1565C0;">www.jlsolutionsgroupe.com</a></p>
+        </div>
+        <p style="color:#aaa;font-size:11px;margin-top:20px;text-align:center;">
+          Sent automatically by ASK JL — your AI assistant on jlsolutionsgroupe.com
+        </p>
+      </div>
+    </div>`;
+  try {
+    await transporter.sendMail({
+      from: `"ASK JL" <${process.env.EMAIL_USER}>`,
+      to:   process.env.NOTIFY_EMAIL || process.env.EMAIL_USER,
+      subject: `📬 ASK JL — Contact Request from ${clientName || 'a visitor'} (${contactType})`,
+      html
+    });
+    console.log(`✅ Contact notification sent — ${contactType}`);
+  } catch (err) {
+    console.error('❌ Email send failed:', err.message);
+  }
+}
+
+function detectContactRequest(messages) {
+  const lastUserMsg = messages.filter(m => m.role === 'user').slice(-1)[0]?.content?.toLowerCase() || '';
+  if (['call','phone','reach you','speak with','talk to someone','give me a call'].some(k => lastUserMsg.includes(k))) return 'Phone call request';
+  if (['email you','send me an email','write to you'].some(k => lastUserMsg.includes(k))) return 'Email contact request';
+  if (['book','schedule','appointment','consultation','set up a time'].some(k => lastUserMsg.includes(k))) return 'Booking / consultation request';
+  return null;
+}
+
+function extractClientName(messages) {
+  for (const m of messages) {
+    if (m.role !== 'user') continue;
+    const match = m.content.match(/(?:my name is|i'?m|i am|call me|this is)\s+([A-Za-z]+)/i);
+    if (match) return match[1];
+    const words = m.content.trim().split(/\s+/);
+    if (words.length === 1 && /^[A-Za-z]+$/.test(words[0])) return words[0];
+  }
+  return null;
+}
+
+const SYSTEM = `You are ASK JL, the warm, knowledgeable, and professional virtual assistant for JL Solutions Groupe (www.jlsolutionsgroupe.com).
+
+SERVICES:
+1. TAX SERVICES — individual & business tax prep, tax planning, IRS issues, extensions, amendments, back taxes.
+2. CREDIT REPAIR — improving credit scores, disputing errors, understanding credit reports, building credit.
+3. NOTARY PUBLIC & LOAN SIGNING AGENT — notarizations, mortgage closings, loan signings, apostilles.
+4. IMMIGRATION SERVICES — DACA renewals, naturalization, green cards, family petitions, work permits, visas. Note: document prep assistance only, not legal advice.
+5. WEB DESIGN — business websites, landing pages, e-commerce, redesigns, maintenance.
+
+RULES:
+- Warm, friendly, professional. Use client's first name once known.
+- First message: ask their name before anything else.
+- Ask clarifying questions. Keep responses to 2-3 short paragraphs.
+- End with a follow-up question or next step.
+- For pricing: invite them to a free consultation.
+- Never make up prices, license numbers, or addresses.
+
+CONTACT — share whenever a client wants to call, email, or book:
+- Phone: 803-904-7260
+- Email: info@jlsolutionsgroupe.com
+- Website: www.jlsolutionsgroupe.com
+
+When a client asks to call, email, or book — share the contact info and warmly encourage them to reach out.`;
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', service: 'ASK JL Proxy', version: '2.0.0' });
+});
+
 app.post('/api/chat', async (req, res) => {
   const { messages } = req.body;
-
-  // Basic validation
-  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+  if (!messages || !Array.isArray(messages) || messages.length === 0)
     return res.status(400).json({ error: 'messages array is required.' });
-  }
 
-  // Sanitize: only forward role + content, strip anything else
   const sanitized = messages
     .filter(m => m && ['user','assistant'].includes(m.role) && typeof m.content === 'string')
-    .map(m => ({ role: m.role, content: m.content.slice(0, 4000) })); // cap per-message length
+    .map(m => ({ role: m.role, content: m.content.slice(0, 4000) }));
 
-  if (sanitized.length === 0) {
+  if (sanitized.length === 0)
     return res.status(400).json({ error: 'No valid messages provided.' });
-  }
-
-  // System prompt (lives on the server — clients never see this)
-  const SYSTEM = `You are ASK JL, the warm, knowledgeable, and professional virtual assistant for JL Solutions Groupe (www.jlsolutionsgroupe.com). You represent the company with confidence and care.
-
-SERVICES YOU SUPPORT:
-1. TAX SERVICES — individual & business tax preparation, tax planning, IRS correspondence, extensions, amendments, back taxes, maximizing deductions & credits.
-2. CREDIT REPAIR — improving credit scores, disputing inaccurate items on credit reports, understanding credit reports (Equifax, TransUnion, Experian), building credit, debt management strategies.
-3. NOTARY PUBLIC & LOAN SIGNING AGENT — general notarization, mortgage & refinance closings, loan document signings, apostilles, remote online notarization guidance, what documents require notarization.
-4. IMMIGRATION SERVICES — DACA renewals, naturalization (N-400), green card applications (I-485), family petitions (I-130), work permits (EAD), visitor/student visas, TPS, status inquiries. Always note that you provide document preparation assistance and NOT legal advice — recommend consulting a licensed immigration attorney for legal matters.
-5. WEB DESIGN — professional business websites, landing pages, e-commerce stores, redesigns, website maintenance, pricing expectations, project timelines, what information clients need to prepare.
-
-YOUR PERSONALITY & RULES:
-- You are warm, friendly, and professional. You use the client's first name once you learn it.
-- The very first time a client messages, ask their name before anything else.
-- Ask clarifying questions to understand their specific situation before recommending solutions.
-- Give clear, plain-English explanations — never condescending, never overly technical.
-- For tax and immigration questions that require a licensed professional's judgment, say so clearly and offer to schedule a consultation.
-- Keep responses concise: 2–3 short paragraphs. Avoid walls of text.
-- Always end with either a follow-up question, a clear next step, or an offer to help with something else.
-- If asked about pricing, say that pricing depends on the client's specific situation and invite them to book a free consultation.
-- You can offer to connect clients with the team by telling them to visit the website.
-- Never make up license numbers, addresses, phone numbers, or prices.
-
-CONTACT PROMPT: When appropriate, remind clients they can reach JL Solutions Groupe directly at www.jlsolutionsgroupe.com to book a consultation.`;
 
   try {
     const apiRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method:  'POST',
+      method: 'POST',
       headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         process.env.ANTHROPIC_API_KEY,
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model:      'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-20250514',
         max_tokens: 1024,
-        system:     SYSTEM,
-        messages:   sanitized
+        system: SYSTEM,
+        messages: sanitized
       })
     });
 
@@ -148,27 +194,22 @@ CONTACT PROMPT: When appropriate, remind clients they can reach JL Solutions Gro
     const data  = await apiRes.json();
     const reply = data?.content?.[0]?.text || '';
 
-    // Return only the reply text — never echo back the full Anthropic response
-    return res.json({ reply });
+    const contactType = detectContactRequest(sanitized);
+    if (contactType) {
+      const clientName  = extractClientName(sanitized);
+      const lastUserMsg = sanitized.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
+      sendContactNotification(clientName, lastUserMsg, contactType);
+    }
 
+    return res.json({ reply });
   } catch (err) {
     console.error('Proxy error:', err);
     return res.status(500).json({ error: 'Server error. Please try again.' });
   }
 });
 
-/* ──────────────────────────────────────────
-   CATCH-ALL
-────────────────────────────────────────── */
-app.use((req, res) => {
-  res.status(404).json({ error: 'Not found.' });
-});
+app.use((req, res) => res.status(404).json({ error: 'Not found.' }));
 
-/* ──────────────────────────────────────────
-   START
-────────────────────────────────────────── */
 app.listen(PORT, () => {
-  console.log(`✅  ASK JL proxy running on port ${PORT}`);
-  console.log(`    Health: http://localhost:${PORT}/health`);
-  console.log(`    Chat:   POST http://localhost:${PORT}/api/chat`);
+  console.log(`✅  ASK JL proxy v2 running on port ${PORT}`);
 });
