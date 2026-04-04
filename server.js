@@ -48,9 +48,9 @@ app.use('/api/', limiter);
      NOTIFY_EMAIL   = info@jlsolutionsgroupe.com
 */
 async function sendContactNotification(clientName, clientMessage, contactType) {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    console.log('RESEND_API_KEY not set — skipping email notification');
+  const accessKey = process.env.WEB3FORMS_KEY;
+  if (!accessKey) {
+    console.log('WEB3FORMS_KEY not set — skipping email notification');
     return;
   }
 
@@ -89,24 +89,27 @@ async function sendContactNotification(clientName, clientMessage, contactType) {
     </div>`;
 
   try {
-    const res = await fetch('https://api.resend.com/emails', {
+    const res = await fetch('https://api.web3forms.com/submit', {
       method: 'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from:    process.env.RESEND_FROM || 'ASK JL <noreply@jlsolutionsgroupe.com>',
-        to:      [process.env.NOTIFY_EMAIL || 'info@jlsolutionsgroupe.com'],
-        subject: `📬 ASK JL — Contact Request from ${clientName || 'a visitor'} (${contactType})`,
-        html
+        access_key: accessKey,
+        subject: `ASK JL — Contact Request: ${contactType}`,
+        from_name: `ASK JL — ${clientName || 'A visitor'}`,
+        message: `Client: ${clientName || 'Not provided'}
+Request: ${contactType}
+Message: ${clientMessage}
+
+Follow up:
+Phone: 803-904-7260
+Email: info@jlsolutionsgroupe.com`
       })
     });
-    if (res.ok) {
-      console.log(`✅ Contact notification sent — ${contactType}`);
+    const result = await res.json();
+    if (result.success) {
+      console.log(`✅ Email notification sent — ${contactType}`);
     } else {
-      const err = await res.text();
-      console.error('❌ Resend error:', err);
+      console.error('❌ Web3Forms error:', result.message);
     }
   } catch (err) {
     console.error('❌ Email send failed:', err.message);
