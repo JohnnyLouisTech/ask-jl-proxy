@@ -96,7 +96,7 @@ async function sendContactNotification(clientName, clientMessage, contactType) {
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        from:    'ASK JL <onboarding@resend.dev>',
+        from:    process.env.RESEND_FROM || 'ASK JL <noreply@jlsolutionsgroupe.com>',
         to:      [process.env.NOTIFY_EMAIL || 'info@jlsolutionsgroupe.com'],
         subject: `📬 ASK JL — Contact Request from ${clientName || 'a visitor'} (${contactType})`,
         html
