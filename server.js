@@ -1,16 +1,15 @@
 /**
  * ============================================================
  * ASK JL — Backend Proxy Server v2
- * Email notifications via Microsoft 365 / Outlook
+ * Email notifications via Resend.com (works with any email)
  * ============================================================
  */
 
 require('dotenv').config();
-const express    = require('express');
-const cors       = require('cors');
-const rateLimit  = require('express-rate-limit');
-const fetch      = require('node-fetch');
-const nodemailer = require('nodemailer');
+const express   = require('express');
+const cors      = require('cors');
+const rateLimit = require('express-rate-limit');
+const fetch     = require('node-fetch');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -43,27 +42,18 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-/* ── Microsoft 365 Email Setup ──
+/* ── Email via Resend.com ──
    Railway environment variables needed:
-     EMAIL_USER   = info@jlsolutionsgroupe.com
-     EMAIL_PASS   = your Microsoft 365 password
-     NOTIFY_EMAIL = info@jlsolutionsgroupe.com
+     RESEND_API_KEY = re_xxxxxxxxxxxx  (from resend.com)
+     NOTIFY_EMAIL   = info@jlsolutionsgroupe.com
 */
-const transporter = nodemailer.createTransport({
-  host:   'smtp.office365.com',
-  port:   587,
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  },
-  tls: { rejectUnauthorized: false }
-});
-
 async function sendContactNotification(clientName, clientMessage, contactType) {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.log('Email not configured — skipping notification'); return;
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.log('RESEND_API_KEY not set — skipping email notification');
+    return;
   }
+
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
       <div style="background:#0B2545;padding:24px 28px;border-radius:10px 10px 0 0;">
@@ -97,24 +87,38 @@ async function sendContactNotification(clientName, clientMessage, contactType) {
         </p>
       </div>
     </div>`;
+
   try {
-    await transporter.sendMail({
-      from: `"ASK JL" <${process.env.EMAIL_USER}>`,
-      to:   process.env.NOTIFY_EMAIL || process.env.EMAIL_USER,
-      subject: `📬 ASK JL — Contact Request from ${clientName || 'a visitor'} (${contactType})`,
-      html
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        from:    'ASK JL <onboarding@resend.dev>',
+        to:      [process.env.NOTIFY_EMAIL || 'info@jlsolutionsgroupe.com'],
+        subject: `📬 ASK JL — Contact Request from ${clientName || 'a visitor'} (${contactType})`,
+        html
+      })
     });
-    console.log(`✅ Contact notification sent — ${contactType}`);
+    if (res.ok) {
+      console.log(`✅ Contact notification sent — ${contactType}`);
+    } else {
+      const err = await res.text();
+      console.error('❌ Resend error:', err);
+    }
   } catch (err) {
     console.error('❌ Email send failed:', err.message);
   }
 }
 
+/* ── Contact Detection ── */
 function detectContactRequest(messages) {
   const lastUserMsg = messages.filter(m => m.role === 'user').slice(-1)[0]?.content?.toLowerCase() || '';
   if (['call','phone','reach you','speak with','talk to someone','give me a call'].some(k => lastUserMsg.includes(k))) return 'Phone call request';
-  if (['email you','send me an email','write to you'].some(k => lastUserMsg.includes(k))) return 'Email contact request';
-  if (['book','schedule','appointment','consultation','set up a time'].some(k => lastUserMsg.includes(k))) return 'Booking / consultation request';
+  if (['email you','send me an email','write to you','contact by email'].some(k => lastUserMsg.includes(k))) return 'Email contact request';
+  if (['book','schedule','appointment','consultation','set up a time','meet with'].some(k => lastUserMsg.includes(k))) return 'Booking / consultation request';
   return null;
 }
 
@@ -129,6 +133,7 @@ function extractClientName(messages) {
   return null;
 }
 
+/* ── System Prompt ── */
 const SYSTEM = `You are ASK JL, the warm, knowledgeable, and professional virtual assistant for JL Solutions Groupe (www.jlsolutionsgroupe.com).
 
 SERVICES:
@@ -151,12 +156,14 @@ CONTACT — share whenever a client wants to call, email, or book:
 - Email: info@jlsolutionsgroupe.com
 - Website: www.jlsolutionsgroupe.com
 
-When a client asks to call, email, or book — share the contact info and warmly encourage them to reach out.`;
+When a client asks to call, email, or book — share the contact info above and warmly encourage them to reach out.`;
 
+/* ── Health Check ── */
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'ASK JL Proxy', version: '2.0.0' });
 });
 
+/* ── Main Chat Endpoint ── */
 app.post('/api/chat', async (req, res) => {
   const { messages } = req.body;
   if (!messages || !Array.isArray(messages) || messages.length === 0)
