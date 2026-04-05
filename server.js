@@ -48,9 +48,9 @@ app.use('/api/', limiter);
      NOTIFY_EMAIL   = info@jlsolutionsgroupe.com
 */
 async function sendContactNotification(clientName, clientMessage, contactType) {
-  const accessKey = process.env.WEB3FORMS_KEY;
-  if (!accessKey) {
-    console.log('WEB3FORMS_KEY not set — skipping email notification');
+  const formId = process.env.FORMSPREE_ID;
+  if (!formId) {
+    console.log('FORMSPREE_ID not set — skipping email notification');
     return;
   }
 
